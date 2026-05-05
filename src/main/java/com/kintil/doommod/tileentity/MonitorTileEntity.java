@@ -169,6 +169,17 @@ public class MonitorTileEntity extends TileEntity implements ITickable {
         markDirty();
     }
 
+    /**
+     * Server-side only: persist the WAD path so it syncs to clients via NBT.
+     * Clients will start DoomEngine themselves in onDataPacket().
+     * Never call loadDoom() on the server — DoomEngine needs a display context.
+     */
+    public void saveWadPath(String wadPath) {
+        this.doomWadPath = wadPath;
+        this.doomLoaded  = true; // optimistic: client will confirm on init
+        syncToClients();
+    }
+
     public void stopDoom() {
         if (doomEngine != null) {
             doomEngine.destroy();
@@ -190,6 +201,14 @@ public class MonitorTileEntity extends TileEntity implements ITickable {
     public void update() {
         if (world == null || !world.isRemote) return;
         if (!powered || !isMaster) return;
+
+        // If doomLoaded was restored from NBT but engine never started (e.g. world reload),
+        // kick off initialisation now.
+        if (doomLoaded && doomEngine == null && !doomWadPath.isEmpty()) {
+            loadDoom(doomWadPath);
+            return;
+        }
+
         if (!doomLoaded || doomEngine == null) return;
 
         doomEngine.tick(pixelBuffer);
@@ -244,7 +263,21 @@ public class MonitorTileEntity extends TileEntity implements ITickable {
 
     @Override public SPacketUpdateTileEntity getUpdatePacket() { return new SPacketUpdateTileEntity(pos, 1, getUpdateTag()); }
     @Override public NBTTagCompound getUpdateTag()             { return writeToNBT(new NBTTagCompound()); }
-    @Override public void onDataPacket(NetworkManager net, SPacketUpdateTileEntity pkt) { readFromNBT(pkt.getNbtCompound()); }
+    @Override public void onDataPacket(NetworkManager net, SPacketUpdateTileEntity pkt) {
+        String prevWadPath = this.doomWadPath;
+        boolean prevLoaded = this.doomLoaded;
+        readFromNBT(pkt.getNbtCompound());
+
+        // Client-side: if server synced a wadPath and we haven't started DoomEngine yet,
+        // start it now. This is the ONLY place DoomEngine is initialised — never on the server.
+        if (world != null && world.isRemote && isMaster) {
+            boolean pathChanged = !doomWadPath.isEmpty() && !doomWadPath.equals(prevWadPath);
+            boolean notRunning  = doomEngine == null || !prevLoaded;
+            if (doomLoaded && (pathChanged || notRunning)) {
+                loadDoom(doomWadPath); // real init on client
+            }
+        }
+    }
 
     // ═════════════════════════════════════════════════════════════════════════
     // Helpers

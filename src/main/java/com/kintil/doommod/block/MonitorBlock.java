@@ -56,11 +56,13 @@ public class MonitorBlock extends Block implements ITileEntityProvider {
         if (!worldIn.isRemote) {
             monitor.activate(facing);
         } else {
-            // Client side: if already powered and is/has master, open GUI
+            // Client side: open GUI immediately.
+            // Don't check isPowered() here — server just called activate() but the
+            // TileEntity sync packet hasn't arrived yet (race condition).
+            // GUI itself checks isDoomLoaded() to show the WAD prompt or Doom input.
             MonitorTileEntity master = getMaster(worldIn, monitor);
-            if (master != null && master.isPowered()) {
-                com.kintil.doommod.client.gui.GuiMonitor.open(master, master.getPos());
-            }
+            if (master == null) master = monitor; // fallback: treat clicked block as master
+            com.kintil.doommod.client.gui.GuiMonitor.open(master, master.getPos());
         }
         return true;
     }

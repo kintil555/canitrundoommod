@@ -44,11 +44,13 @@ public class PacketLoadWad implements IMessage {
     public static class Handler implements IMessageHandler<PacketLoadWad, IMessage> {
         @Override
         public IMessage onMessage(PacketLoadWad message, MessageContext ctx) {
+            // Runs on SERVER — only save wadPath to NBT so it persists and syncs to clients.
+            // DoomEngine must NEVER be started on the server (no display/rendering context).
             ctx.getServerHandler().player.getServer().addScheduledTask(() -> {
                 World world = ctx.getServerHandler().player.world;
                 TileEntity te = world.getTileEntity(message.pos);
                 if (te instanceof MonitorTileEntity) {
-                    ((MonitorTileEntity) te).loadDoom(message.wadPath);
+                    ((MonitorTileEntity) te).saveWadPath(message.wadPath);
                 }
             });
             return null;
