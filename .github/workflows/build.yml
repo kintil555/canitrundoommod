@@ -30,6 +30,36 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-gradle-
 
+    - name: Pre-populate Forge userdev from installer
+      run: |
+        FORGE_VER="1.12.2-14.23.5.2860"
+        INSTALLER_URL="https://maven.minecraftforge.net/net/minecraftforge/forge/${FORGE_VER}/forge-${FORGE_VER}-installer.jar"
+        MAVEN_DIR="${HOME}/.m2/repository/net/minecraftforge/forge/${FORGE_VER}"
+
+        echo "Downloading Forge installer..."
+        curl -fL "$INSTALLER_URL" -o /tmp/forge-installer.jar
+
+        echo "Extracting userdev from installer..."
+        mkdir -p /tmp/forge-extract
+        cd /tmp/forge-extract
+        jar xf /tmp/forge-installer.jar
+
+        # Installer embeds artifacts under maven/ directory
+        USERDEV_IN="maven/net/minecraftforge/forge/${FORGE_VER}/forge-${FORGE_VER}-userdev.jar"
+        if [ ! -f "$USERDEV_IN" ]; then
+          echo "ERROR: userdev not found in installer. Contents:"
+          find /tmp/forge-extract -name "*.jar" | head -20
+          exit 1
+        fi
+
+        echo "Injecting into local Maven cache..."
+        mkdir -p "$MAVEN_DIR"
+        # Copy all forge artifacts from installer to local maven
+        cp maven/net/minecraftforge/forge/${FORGE_VER}/* "$MAVEN_DIR/" 2>/dev/null || true
+
+        echo "Injected artifacts:"
+        ls -lh "$MAVEN_DIR/"
+
     - name: Setup Gradle wrapper (4.9)
       run: |
         if [ ! -f gradlew ]; then

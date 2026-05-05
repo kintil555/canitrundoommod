@@ -1,5 +1,6 @@
 buildscript {
     repositories {
+        mavenLocal()
         mavenCentral()
         maven { url = "https://maven.minecraftforge.net" }
         maven { url = "https://maven.anatawa12.com/releases" }
@@ -29,6 +30,7 @@ minecraft {
 }
 
 repositories {
+    mavenLocal()
     mavenCentral()
     maven { url = "https://maven.minecraftforge.net" }
 }
