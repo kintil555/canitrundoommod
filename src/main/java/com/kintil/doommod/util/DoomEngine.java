@@ -99,6 +99,13 @@ public class DoomEngine {
             System.out.println("[DoomMod] Framebuffer target: " + frameBufferFile.getAbsolutePath());
             progress(40, "WAD OK (" + (wad.length() / 1024) + " KB). Launching...");
 
+            // Pre-create framebuffer file with correct size so doom can overwrite instead of create
+            int fbSize = width * height * 4;
+            try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(frameBufferFile, "rw")) {
+                raf.setLength(fbSize);
+            }
+            System.out.println("[DoomMod] Pre-created framebuffer file: " + fbSize + " bytes");
+
             List<String> cmd = new ArrayList<>();
             cmd.add(doomExe.getAbsolutePath());
             cmd.add("-iwad");        cmd.add(wad.getAbsolutePath());
@@ -111,6 +118,9 @@ public class DoomEngine {
 
             ProcessBuilder pb = new ProcessBuilder(cmd);
             pb.directory(tempDir);
+            // Set DOOMMOD_FRAMEBUFFER env var (alternative protocol some builds use)
+            pb.environment().put("DOOMMOD_FRAMEBUFFER", frameBufferFile.getAbsolutePath());
+            // Merge stderr into stdout so we capture everything
             pb.redirectErrorStream(true);
             doomProcess = pb.start();
             doomStdin   = doomProcess.getOutputStream();
@@ -147,28 +157,41 @@ public class DoomEngine {
                 return false;
             }
 
-            progress(55, "Waiting for framebuffer...");
-            long deadline = System.currentTimeMillis() + 10000;
+            progress(55, "Waiting for Doom to write framebuffer...");
+            long deadline = System.currentTimeMillis() + 15000; // 15s for slow AV scan
             int waitPct   = 55;
-            while (!frameBufferFile.exists() && System.currentTimeMillis() < deadline) {
+
+            // Since we pre-created the file, check that Doom actually wrote real pixel data.
+            // We detect this by watching file last-modified time change.
+            long lastModified = frameBufferFile.lastModified();
+
+            while (System.currentTimeMillis() < deadline) {
                 Thread.sleep(100);
                 if (!doomProcess.isAlive()) {
                     int code = doomProcess.exitValue();
+                    // Wait a moment for drain thread to collect output
+                    Thread.sleep(300);
                     synchronized (doomOutput) {
                         for (String l : doomOutput) System.out.println("[Doom-crash] " + l);
-                        String lastLine = doomOutput.isEmpty() ? "(no output)" : doomOutput.get(doomOutput.size() - 1);
-                        progress(-1, "Doom died (code " + code + "): " + lastLine);
+                        String lastLine = doomOutput.isEmpty() ? "(no output — possible AV block or missing DLL)" : doomOutput.get(doomOutput.size() - 1);
+                        progress(-1, "Doom exited (code " + code + "): " + lastLine);
                     }
                     return false;
                 }
+                // Check if Doom has written real data (modified time changed)
+                long newMod = frameBufferFile.lastModified();
+                if (newMod != lastModified) {
+                    System.out.println("[DoomMod] Framebuffer written! (mod time changed)");
+                    break;
+                }
                 waitPct = Math.min(90, waitPct + 1);
                 BiConsumer<Integer, String> cb = progressCallback;
-                if (cb != null) cb.accept(waitPct, "Waiting for framebuffer...");
+                if (cb != null) cb.accept(waitPct, "Waiting for first frame...");
             }
 
-            if (!frameBufferFile.exists()) {
+            if (frameBufferFile.lastModified() == lastModified) {
                 int code = doomProcess.isAlive() ? -999 : doomProcess.exitValue();
-                progress(-1, "Framebuffer timeout (exit=" + code + ")");
+                progress(-1, "Doom running but not writing (exit=" + code + ") — check AV/Defender");
                 return false;
             }
 
