@@ -13,3 +13,6 @@ eclipse/
 *.class
 *.jar
 !gradle/wrapper/gradle-wrapper.jar
+!libs/**/*.jar
+!libs/**/*.md5
+!libs/**/*.sha1

@@ -1,6 +1,5 @@
 buildscript {
     repositories {
-        mavenLocal()
         mavenCentral()
         maven { url = "https://maven.minecraftforge.net" }
         maven { url = "https://maven.anatawa12.com/releases" }
@@ -24,13 +23,14 @@ compileJava {
 }
 
 minecraft {
-    version = "1.12.2-14.23.5.2860"
+    version = "1.12.2-14.23.5.2847"
     runDir = "run"
     mappings = "stable_39"
 }
 
 repositories {
-    mavenLocal()
+    // Local file-based Maven repo — contains forge userdev bundled in this project
+    maven { url = uri("${rootDir}/libs") }
     mavenCentral()
     maven { url = "https://maven.minecraftforge.net" }
 }
