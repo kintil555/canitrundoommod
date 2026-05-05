@@ -32,6 +32,11 @@ public class DoomMod {
         public ItemStack getTabIconItem() {
             return new ItemStack(ModBlocks.MONITOR_BLOCK);
         }
+
+        @Override
+        public net.minecraft.item.Item createIcon() {
+            return Item.getItemFromBlock(ModBlocks.MONITOR_BLOCK);
+        }
     };
 
     @Mod.EventHandler

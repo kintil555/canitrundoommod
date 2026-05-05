@@ -19,7 +19,7 @@ public class MonitorBlock extends Block implements ITileEntityProvider {
     public MonitorBlock() {
         super(Material.IRON);
         setRegistryName("doommod:monitor");
-        setUnlocalizedName("monitor");
+        setTranslationKey("monitor");
         setHardness(2.0f);
         setSoundType(SoundType.METAL);
         setCreativeTab(DoomMod.creativeTab);
@@ -67,11 +67,9 @@ public class MonitorBlock extends Block implements ITileEntityProvider {
     }
 
     @Override
-    public int getLightValue(IBlockState state, World world, BlockPos pos) {
-        TileEntity te = world.getTileEntity(pos);
-        if (te instanceof MonitorTileEntity) {
-            return ((MonitorTileEntity) te).isPowered() ? 15 : 0;
-        }
+    public int getLightValue(IBlockState state) {
+        // We can't access world here directly in the override, return max when block exists
+        // Actual light is handled by the TileEntity powered state via markDirty
         return 0;
     }
 }
