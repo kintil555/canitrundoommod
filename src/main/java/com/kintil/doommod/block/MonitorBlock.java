@@ -23,7 +23,6 @@ public class MonitorBlock extends Block implements ITileEntityProvider {
         setHardness(2.0f);
         setSoundType(SoundType.METAL);
         setCreativeTab(DoomMod.creativeTab);
-        setLightLevel(0f);
     }
 
     @Override
@@ -38,38 +37,64 @@ public class MonitorBlock extends Block implements ITileEntityProvider {
 
     @Override
     public boolean onBlockActivated(World worldIn, BlockPos pos, IBlockState state,
-                                     EntityPlayer playerIn, EnumHand hand,
-                                     EnumFacing facing, float hitX, float hitY, float hitZ) {
-        if (worldIn.isRemote) {
-            TileEntity te = worldIn.getTileEntity(pos);
-            if (te instanceof MonitorTileEntity) {
-                MonitorTileEntity monitor = (MonitorTileEntity) te;
-                boolean isSneaking = playerIn.isSneaking();
-                // Shift + right click = lock/unlock player to monitor
-                if (isSneaking) {
-                    monitor.togglePlayerLock(playerIn);
-                } else {
-                    // Right click = toggle monitor on/face
-                    monitor.togglePower(facing);
-                    // Open GUI if powered
-                    if (monitor.isPowered()) {
-                        com.kintil.doommod.client.gui.GuiMonitor.open(monitor, pos);
-                    }
-                }
+                                    EntityPlayer playerIn, EnumHand hand,
+                                    EnumFacing facing, float hitX, float hitY, float hitZ) {
+
+        TileEntity te = worldIn.getTileEntity(pos);
+        if (!(te instanceof MonitorTileEntity)) return true;
+        MonitorTileEntity monitor = (MonitorTileEntity) te;
+
+        if (playerIn.isSneaking()) {
+            // Shift+click: toggle power off for whole cluster
+            if (!worldIn.isRemote) {
+                turnOffCluster(worldIn, monitor);
+            }
+            return true;
+        }
+
+        // Normal click: power on cluster (server side sets state, client opens GUI)
+        if (!worldIn.isRemote) {
+            monitor.activate(facing);
+        } else {
+            // Client side: if already powered and is/has master, open GUI
+            MonitorTileEntity master = getMaster(worldIn, monitor);
+            if (master != null && master.isPowered()) {
+                com.kintil.doommod.client.gui.GuiMonitor.open(master, master.getPos());
             }
         }
         return true;
     }
 
-    @Override
-    public boolean isOpaqueCube(IBlockState state) {
-        return false;
+    /** Walk the cluster (by master reference) and deactivate all blocks. */
+    private void turnOffCluster(World world, MonitorTileEntity clicked) {
+        MonitorTileEntity master = getMaster(world, clicked);
+        if (master == null) return;
+        // Deactivate master (stops doom engine)
+        master.deactivate();
+        // Scan nearby for slaves that point to this master
+        BlockPos mp = master.getPos();
+        for (int dx = -MonitorTileEntity.GRID_W; dx <= MonitorTileEntity.GRID_W; dx++) {
+            for (int dy = -MonitorTileEntity.GRID_H; dy <= MonitorTileEntity.GRID_H; dy++) {
+                for (int dz = -MonitorTileEntity.GRID_W; dz <= MonitorTileEntity.GRID_W; dz++) {
+                    TileEntity te = world.getTileEntity(mp.add(dx, dy, dz));
+                    if (te instanceof MonitorTileEntity) {
+                        MonitorTileEntity m = (MonitorTileEntity) te;
+                        if (!m.isMaster() && mp.equals(m.getMasterPos())) {
+                            m.deactivate();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    public static MonitorTileEntity getMaster(World world, MonitorTileEntity te) {
+        if (te.isMaster()) return te;
+        if (te.getMasterPos() == null) return null;
+        TileEntity masterTe = world.getTileEntity(te.getMasterPos());
+        return masterTe instanceof MonitorTileEntity ? (MonitorTileEntity) masterTe : null;
     }
 
     @Override
-    public int getLightValue(IBlockState state) {
-        // We can't access world here directly in the override, return max when block exists
-        // Actual light is handled by the TileEntity powered state via markDirty
-        return 0;
-    }
+    public boolean isOpaqueCube(IBlockState state) { return false; }
 }

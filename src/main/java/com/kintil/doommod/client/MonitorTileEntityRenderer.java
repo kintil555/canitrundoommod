@@ -1,9 +1,12 @@
 package com.kintil.doommod.client;
 
 import com.kintil.doommod.tileentity.MonitorTileEntity;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.tileentity.TileEntitySpecialRenderer;
+import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.EnumFacing;
+import net.minecraft.util.math.BlockPos;
 import net.minecraftforge.fml.relauncher.Side;
 import net.minecraftforge.fml.relauncher.SideOnly;
 import org.lwjgl.opengl.GL11;
@@ -15,40 +18,119 @@ import java.util.Map;
 @SideOnly(Side.CLIENT)
 public class MonitorTileEntityRenderer extends TileEntitySpecialRenderer<MonitorTileEntity> {
 
-    // One texture per tile entity (by pos hashcode)
-    private final Map<Long, Integer> textures = new HashMap<>();
+    // One GL texture per master TileEntity (keyed by master BlockPos long)
+    private final Map<Long, Integer> masterTextures = new HashMap<>();
 
     @Override
     public void render(MonitorTileEntity te, double x, double y, double z,
-                        float partialTicks, int destroyStage, float alpha) {
-        if (!te.isPowered() || !te.isDoomLoaded()) return;
+                       float partialTicks, int destroyStage, float alpha) {
 
-        long key = te.getPos().toLong();
+        if (!te.isPowered()) return;
+
+        // ── Resolve master ────────────────────────────────────────────────────
+        MonitorTileEntity master;
+        int gx, gy;
+
+        if (te.isMaster()) {
+            master = te;
+            gx = 0; gy = 0;
+        } else {
+            BlockPos mp = te.getMasterPos();
+            if (mp == null) return;
+            TileEntity masterTe = getWorld().getTileEntity(mp);
+            if (!(masterTe instanceof MonitorTileEntity)) return;
+            master = (MonitorTileEntity) masterTe;
+            if (!master.isPowered()) return;
+            gx = te.getGridX();
+            gy = te.getGridY();
+        }
+
+        // ── Ensure GL texture exists for this master ──────────────────────────
+        long key = master.getPos().toLong();
         int tex;
-        if (!textures.containsKey(key)) {
+        if (!masterTextures.containsKey(key)) {
             tex = GL11.glGenTextures();
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, tex);
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_NEAREST);
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_NEAREST);
-            // Allocate
-            ByteBuffer buf = ByteBuffer.allocateDirect(MonitorTileEntity.DOOM_WIDTH * MonitorTileEntity.DOOM_HEIGHT * 4);
+            ByteBuffer empty = ByteBuffer.allocateDirect(
+                    MonitorTileEntity.DOOM_WIDTH * MonitorTileEntity.DOOM_HEIGHT * 4);
             GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA,
                     MonitorTileEntity.DOOM_WIDTH, MonitorTileEntity.DOOM_HEIGHT,
-                    0, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, buf);
-            textures.put(key, tex);
+                    0, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, empty);
+            masterTextures.put(key, tex);
         } else {
-            tex = textures.get(key);
+            tex = masterTextures.get(key);
         }
 
-        // Upload pixel buffer
-        int[] pixels = te.getPixelBuffer();
-        byte[] rgba = new byte[pixels.length * 4];
+        // ── Upload pixel buffer when this IS the master block ─────────────────
+        if (te.isMaster() && master.isDoomLoaded()) {
+            uploadFrame(master, tex);
+        }
+
+        // ── Calculate UV slice for this block in the grid ─────────────────────
+        // Grid: GRID_W columns, GRID_H rows.  gx=0 is left, gy=0 is BOTTOM (Minecraft Y).
+        // UV: u increases left→right, v increases top→bottom.
+        // So gy=0 (bottom block) maps to v near 1.0, gy=GRID_H-1 (top) maps to v near 0.0.
+
+        int GW = MonitorTileEntity.GRID_W;
+        int GH = MonitorTileEntity.GRID_H;
+
+        float uMin = (float) gx       / GW;
+        float uMax = (float)(gx + 1)  / GW;
+        float vMin = (float)(GH - 1 - gy) / GH; // flip Y
+        float vMax = (float)(GH     - gy) / GH;
+
+        // ── GL render ─────────────────────────────────────────────────────────
+        GlStateManager.pushMatrix();
+        GlStateManager.translate(x + 0.5, y + 0.5, z + 0.5);
+        applyFaceTransform(te.getActiveFace());
+
+        GlStateManager.disableLighting();
+        GlStateManager.enableTexture2D();
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, tex);
+        GlStateManager.color(1f, 1f, 1f, 1f);
+
+        // Quad sits exactly on the front face of the block
+        float h = 0.5005f; // just in front of block surface
+
+        if (master.isDoomLoaded()) {
+            // Render the Doom framebuffer slice
+            GL11.glBegin(GL11.GL_QUADS);
+            GL11.glTexCoord2f(uMin, vMin); GL11.glVertex3f(-0.5f,  0.5f, h);
+            GL11.glTexCoord2f(uMax, vMin); GL11.glVertex3f( 0.5f,  0.5f, h);
+            GL11.glTexCoord2f(uMax, vMax); GL11.glVertex3f( 0.5f, -0.5f, h);
+            GL11.glTexCoord2f(uMin, vMax); GL11.glVertex3f(-0.5f, -0.5f, h);
+            GL11.glEnd();
+        } else {
+            // No game loaded: draw a black/dark-green standby screen
+            GlStateManager.disableTexture2D();
+            // Dark screen
+            GL11.glBegin(GL11.GL_QUADS);
+            GL11.glColor3f(0.02f, 0.04f, 0.02f);
+            GL11.glVertex3f(-0.5f,  0.5f, h);
+            GL11.glVertex3f( 0.5f,  0.5f, h);
+            GL11.glVertex3f( 0.5f, -0.5f, h);
+            GL11.glVertex3f(-0.5f, -0.5f, h);
+            GL11.glEnd();
+            GL11.glColor3f(1f, 1f, 1f);
+            GlStateManager.enableTexture2D();
+        }
+
+        GlStateManager.enableLighting();
+        GlStateManager.popMatrix();
+    }
+
+    /** Upload the full DOOM pixel buffer to the master's GL texture. */
+    private void uploadFrame(MonitorTileEntity master, int tex) {
+        int[] pixels = master.getPixelBuffer();
+        byte[] rgba  = new byte[pixels.length * 4];
         for (int i = 0; i < pixels.length; i++) {
             int argb = pixels[i];
-            rgba[i * 4]     = (byte)((argb >> 16) & 0xFF);
-            rgba[i * 4 + 1] = (byte)((argb >> 8) & 0xFF);
-            rgba[i * 4 + 2] = (byte)(argb & 0xFF);
-            rgba[i * 4 + 3] = (byte)0xFF;
+            rgba[i*4]     = (byte)((argb >> 16) & 0xFF); // R
+            rgba[i*4 + 1] = (byte)((argb >>  8) & 0xFF); // G
+            rgba[i*4 + 2] = (byte)( argb        & 0xFF); // B
+            rgba[i*4 + 3] = (byte)0xFF;                   // A
         }
         ByteBuffer buf = ByteBuffer.allocateDirect(rgba.length);
         buf.put(rgba).flip();
@@ -56,41 +138,20 @@ public class MonitorTileEntityRenderer extends TileEntitySpecialRenderer<Monitor
         GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0,
                 MonitorTileEntity.DOOM_WIDTH, MonitorTileEntity.DOOM_HEIGHT,
                 GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, buf);
-
-        // Render quad on the active face
-        GlStateManager.pushMatrix();
-        GlStateManager.translate(x + 0.5, y + 0.5, z + 0.5);
-
-        EnumFacing face = te.getActiveFace();
-        setupFaceTransform(face);
-
-        GlStateManager.enableTexture2D();
-        GL11.glBindTexture(GL11.GL_TEXTURE_2D, tex);
-        GlStateManager.color(1f, 1f, 1f, 1f);
-        GlStateManager.disableLighting();
-
-        float half = 0.499f;
-        float offset = 0.501f; // Slightly in front of block face
-
-        GL11.glBegin(GL11.GL_QUADS);
-        GL11.glTexCoord2f(0f, 0f); GL11.glVertex3f(-half, half, offset);
-        GL11.glTexCoord2f(1f, 0f); GL11.glVertex3f(half, half, offset);
-        GL11.glTexCoord2f(1f, 1f); GL11.glVertex3f(half, -half, offset);
-        GL11.glTexCoord2f(0f, 1f); GL11.glVertex3f(-half, -half, offset);
-        GL11.glEnd();
-
-        GlStateManager.enableLighting();
-        GlStateManager.popMatrix();
     }
 
-    private void setupFaceTransform(EnumFacing face) {
+    /**
+     * Rotate so that the +Z axis of our local space points OUT of the block face,
+     * and the quad is drawn on that face.
+     */
+    private void applyFaceTransform(EnumFacing face) {
         switch (face) {
-            case NORTH: GlStateManager.rotate(0, 0, 1, 0); break;
-            case SOUTH: GlStateManager.rotate(180, 0, 1, 0); break;
-            case EAST:  GlStateManager.rotate(-90, 0, 1, 0); break;
-            case WEST:  GlStateManager.rotate(90, 0, 1, 0); break;
-            case UP:    GlStateManager.rotate(-90, 1, 0, 0); break;
-            case DOWN:  GlStateManager.rotate(90, 1, 0, 0); break;
+            case NORTH: GlStateManager.rotate(180,  0, 1, 0); break; // -Z face, flip 180
+            case SOUTH:                                         break; // +Z face, no rotation
+            case EAST:  GlStateManager.rotate( 90,  0, 1, 0); break;
+            case WEST:  GlStateManager.rotate(-90,  0, 1, 0); break;
+            case UP:    GlStateManager.rotate(-90,  1, 0, 0); break;
+            case DOWN:  GlStateManager.rotate( 90,  1, 0, 0); break;
         }
     }
 }
