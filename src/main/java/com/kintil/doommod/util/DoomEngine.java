@@ -86,6 +86,8 @@ public class DoomEngine {
                 progress(-1, "No Doom binary for this platform.");
                 return false;
             }
+            System.out.println("[DoomMod] Binary: " + doomExe.getAbsolutePath()
+                    + " (" + doomExe.length() + " bytes, exe=" + doomExe.canExecute() + ")");
 
             progress(30, "Checking WAD file...");
             File wad = new File(wadPath);
@@ -93,7 +95,9 @@ public class DoomEngine {
                 progress(-1, "WAD not found: " + wadPath);
                 return false;
             }
-            progress(40, "WAD OK (" + (wad.length() / 1024) + " KB). Launching process...");
+            System.out.println("[DoomMod] WAD: " + wad.getAbsolutePath());
+            System.out.println("[DoomMod] Framebuffer target: " + frameBufferFile.getAbsolutePath());
+            progress(40, "WAD OK (" + (wad.length() / 1024) + " KB). Launching...");
 
             List<String> cmd = new ArrayList<>();
             cmd.add(doomExe.getAbsolutePath());
@@ -103,6 +107,7 @@ public class DoomEngine {
             cmd.add("-height");      cmd.add(String.valueOf(height));
             cmd.add("-nomusic");
             cmd.add("-nosound");
+            System.out.println("[DoomMod] CMD: " + cmd);
 
             ProcessBuilder pb = new ProcessBuilder(cmd);
             pb.directory(tempDir);
@@ -111,14 +116,15 @@ public class DoomEngine {
             doomStdin   = doomProcess.getOutputStream();
             running.set(true);
 
-            // Drain stdout/stderr — also feeds log lines to the callback
+            // Buffer all Doom stdout/stderr for crash diagnosis
+            final List<String> doomOutput = new ArrayList<>();
             Thread drain = new Thread(() -> {
                 try (BufferedReader br = new BufferedReader(
                         new InputStreamReader(doomProcess.getInputStream()))) {
                     String line;
                     while ((line = br.readLine()) != null) {
                         System.out.println("[Doom] " + line);
-                        // Forward interesting Doom boot lines to the progress UI
+                        synchronized (doomOutput) { doomOutput.add(line); }
                         BiConsumer<Integer, String> cb = progressCallback;
                         if (cb != null && !line.trim().isEmpty()) {
                             cb.accept(75, "\u00a77" + line.trim());
@@ -129,31 +135,47 @@ public class DoomEngine {
             drain.setDaemon(true);
             drain.start();
 
+            // Wait briefly for instant-crash detection
+            Thread.sleep(500);
+            if (!doomProcess.isAlive()) {
+                int code = doomProcess.exitValue();
+                synchronized (doomOutput) {
+                    for (String l : doomOutput) System.out.println("[Doom-crash] " + l);
+                    String lastLine = doomOutput.isEmpty() ? "(no output)" : doomOutput.get(doomOutput.size() - 1);
+                    progress(-1, "Doom exited (code " + code + "): " + lastLine);
+                }
+                return false;
+            }
+
             progress(55, "Waiting for framebuffer...");
-            long deadline = System.currentTimeMillis() + 8000; // give it 8 s
+            long deadline = System.currentTimeMillis() + 10000;
             int waitPct   = 55;
             while (!frameBufferFile.exists() && System.currentTimeMillis() < deadline) {
                 Thread.sleep(100);
                 if (!doomProcess.isAlive()) {
-                    progress(-1, "Doom process died before writing framebuffer.");
+                    int code = doomProcess.exitValue();
+                    synchronized (doomOutput) {
+                        for (String l : doomOutput) System.out.println("[Doom-crash] " + l);
+                        String lastLine = doomOutput.isEmpty() ? "(no output)" : doomOutput.get(doomOutput.size() - 1);
+                        progress(-1, "Doom died (code " + code + "): " + lastLine);
+                    }
                     return false;
                 }
-                // Animate progress bar while we wait (55 → 90)
                 waitPct = Math.min(90, waitPct + 1);
                 BiConsumer<Integer, String> cb = progressCallback;
                 if (cb != null) cb.accept(waitPct, "Waiting for framebuffer...");
             }
 
             if (!frameBufferFile.exists()) {
-                progress(-1, "Framebuffer never appeared — Doom may have crashed.");
+                int code = doomProcess.isAlive() ? -999 : doomProcess.exitValue();
+                progress(-1, "Framebuffer timeout (exit=" + code + ")");
                 return false;
             }
 
             progress(92, "Opening framebuffer...");
             rafFramebuffer = new RandomAccessFile(frameBufferFile, "r");
-
             initDone.set(true);
-            progress(100, "Ready! \u00a7aRIP AND TEAR");
+            progress(100, "Ready! RIP AND TEAR");
             return true;
 
         } catch (Exception e) {
