@@ -8,6 +8,7 @@ import java.nio.file.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiConsumer;
 
 @SideOnly(Side.CLIENT)
 public class DoomEngine {
@@ -16,12 +17,18 @@ public class DoomEngine {
     private File           frameBufferFile;
     private File           tempDir;
     private int            width, height;
-    private final AtomicBoolean running = new AtomicBoolean(false);
+    private final AtomicBoolean running    = new AtomicBoolean(false);
+    private final AtomicBoolean initDone   = new AtomicBoolean(false);
     private byte[]         frameBytes;
     private OutputStream   doomStdin;
-    private RandomAccessFile rafFramebuffer; // kept open between ticks — no open/close overhead
+    private RandomAccessFile rafFramebuffer;
 
-    // Doom key codes (doom-generic protocol)
+    // ── Progress / log callback ───────────────────────────────────────────────
+    // Called from the background init thread with (progressPercent 0‥100, message).
+    // Set this before calling initAsync().
+    private volatile BiConsumer<Integer, String> progressCallback = null;
+
+    // ── Doom key codes (doom-generic protocol) ────────────────────────────────
     public static final int DOOM_KEY_RIGHT    = 0xae;
     public static final int DOOM_KEY_LEFT     = 0xac;
     public static final int DOOM_KEY_UP       = 0xad;
@@ -33,36 +40,67 @@ public class DoomEngine {
     public static final int DOOM_KEY_ENTER    = 13;
     public static final int DOOM_KEY_ESCAPE   = 27;
 
+    /** Set a callback (progress 0‥100, message) fired during async init. */
+    public void setProgressCallback(BiConsumer<Integer, String> cb) {
+        this.progressCallback = cb;
+    }
+
+    private void progress(int pct, String msg) {
+        System.out.println("[DoomMod] [" + pct + "%] " + msg);
+        BiConsumer<Integer, String> cb = progressCallback;
+        if (cb != null) cb.accept(pct, msg);
+    }
+
+    /** Returns true immediately. Fires progressCallback on a daemon thread.
+     *  When done: progress(100, "Ready") if success, progress(-1, error) on failure. */
+    public void initAsync(String wadPath, int width, int height) {
+        this.width      = width;
+        this.height     = height;
+        this.frameBytes = new byte[width * height * 4];
+
+        Thread t = new Thread(() -> doInit(wadPath), "DoomMod-Init");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /** Synchronous init — kept for compatibility, blocks caller. Use initAsync() instead. */
     public boolean init(String wadPath, int width, int height) {
         this.width      = width;
         this.height     = height;
-        this.frameBytes = new byte[width * height * 4]; // RGBA
+        this.frameBytes = new byte[width * height * 4];
+        return doInit(wadPath);
+    }
 
+    /** Returns true once initAsync has finished successfully. */
+    public boolean isReady() { return initDone.get() && running.get(); }
+
+    private boolean doInit(String wadPath) {
         try {
+            progress(5, "Creating temp directory...");
             tempDir         = Files.createTempDirectory("doommod").toFile();
             frameBufferFile = new File(tempDir, "framebuffer.raw");
 
-            // Extract bundled doom binary
+            progress(15, "Extracting Doom binary...");
             File doomExe = extractDoomExecutable(tempDir);
             if (doomExe == null) {
-                System.err.println("[DoomMod] No doom executable available for this platform.");
+                progress(-1, "No Doom binary for this platform.");
                 return false;
             }
 
-            // Check WAD
+            progress(30, "Checking WAD file...");
             File wad = new File(wadPath);
             if (!wad.exists()) {
-                System.err.println("[DoomMod] WAD file not found: " + wadPath);
+                progress(-1, "WAD not found: " + wadPath);
                 return false;
             }
+            progress(40, "WAD OK (" + (wad.length() / 1024) + " KB). Launching process...");
 
-            // Launch doom-generic-minecraft
             List<String> cmd = new ArrayList<>();
             cmd.add(doomExe.getAbsolutePath());
-            cmd.add("-iwad");   cmd.add(wad.getAbsolutePath());
+            cmd.add("-iwad");        cmd.add(wad.getAbsolutePath());
             cmd.add("-framebuffer"); cmd.add(frameBufferFile.getAbsolutePath());
-            cmd.add("-width");  cmd.add(String.valueOf(width));
-            cmd.add("-height"); cmd.add(String.valueOf(height));
+            cmd.add("-width");       cmd.add(String.valueOf(width));
+            cmd.add("-height");      cmd.add(String.valueOf(height));
             cmd.add("-nomusic");
             cmd.add("-nosound");
 
@@ -73,39 +111,53 @@ public class DoomEngine {
             doomStdin   = doomProcess.getOutputStream();
             running.set(true);
 
-            // Drain stdout/stderr so doom doesn't block
+            // Drain stdout/stderr — also feeds log lines to the callback
             Thread drain = new Thread(() -> {
                 try (BufferedReader br = new BufferedReader(
                         new InputStreamReader(doomProcess.getInputStream()))) {
                     String line;
-                    while ((line = br.readLine()) != null)
+                    while ((line = br.readLine()) != null) {
                         System.out.println("[Doom] " + line);
+                        // Forward interesting Doom boot lines to the progress UI
+                        BiConsumer<Integer, String> cb = progressCallback;
+                        if (cb != null && !line.isBlank()) {
+                            cb.accept(75, "\u00a77" + line.trim());
+                        }
+                    }
                 } catch (IOException ignored) {}
-            });
+            }, "DoomMod-Drain");
             drain.setDaemon(true);
             drain.start();
 
-            // Wait for framebuffer file to appear (up to 5 s)
-            long deadline = System.currentTimeMillis() + 5000;
+            progress(55, "Waiting for framebuffer...");
+            long deadline = System.currentTimeMillis() + 8000; // give it 8 s
+            int waitPct   = 55;
             while (!frameBufferFile.exists() && System.currentTimeMillis() < deadline) {
-                Thread.sleep(50);
+                Thread.sleep(100);
                 if (!doomProcess.isAlive()) {
-                    System.err.println("[DoomMod] Doom process died before writing framebuffer.");
+                    progress(-1, "Doom process died before writing framebuffer.");
                     return false;
                 }
+                // Animate progress bar while we wait (55 → 90)
+                waitPct = Math.min(90, waitPct + 1);
+                BiConsumer<Integer, String> cb = progressCallback;
+                if (cb != null) cb.accept(waitPct, "Waiting for framebuffer...");
             }
 
             if (!frameBufferFile.exists()) {
-                System.err.println("[DoomMod] Framebuffer never appeared — doom may have crashed.");
+                progress(-1, "Framebuffer never appeared — Doom may have crashed.");
                 return false;
             }
 
-            // Open framebuffer RAF once, keep open for all ticks
+            progress(92, "Opening framebuffer...");
             rafFramebuffer = new RandomAccessFile(frameBufferFile, "r");
+
+            initDone.set(true);
+            progress(100, "Ready! \u00a7aRIP AND TEAR");
             return true;
 
         } catch (Exception e) {
-            System.err.println("[DoomMod] Failed to start doom: " + e.getMessage());
+            progress(-1, "Fatal: " + e.getMessage());
             e.printStackTrace();
             return false;
         }

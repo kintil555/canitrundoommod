@@ -44,6 +44,13 @@ public class MonitorTileEntity extends TileEntity implements ITickable {
     // ── Doom engine (master, client-side only) ────────────────────────────────
     private DoomEngine doomEngine = null;
 
+    // ── Loading guard: prevents concurrent / duplicate init ──────────────────
+    private volatile boolean isLoading    = false;
+
+    // ── Progress state (written by DoomEngine callback, read by GUI) ──────────
+    public  volatile int     loadProgress = 0;   // 0‥100; -1 = error
+    public  volatile String  loadStatus   = "";
+
     // ═════════════════════════════════════════════════════════════════════════
     // Public API
     // ═════════════════════════════════════════════════════════════════════════
@@ -168,9 +175,47 @@ public class MonitorTileEntity extends TileEntity implements ITickable {
     }
 
     public void loadDoom(String wadPath) {
+        // ── Guard: reject any concurrent or duplicate call ────────────────────
+        if (isLoading) {
+            System.out.println("[DoomMod] loadDoom() ignored — already loading.");
+            return;
+        }
+        if (doomEngine != null && doomEngine.isReady() && wadPath.equals(this.doomWadPath)) {
+            System.out.println("[DoomMod] loadDoom() ignored — engine already running with same WAD.");
+            return;
+        }
+
+        // Stop any existing engine first
+        if (doomEngine != null) {
+            doomEngine.destroy();
+            doomEngine = null;
+        }
+
         this.doomWadPath = wadPath;
-        if (doomEngine == null) doomEngine = new DoomEngine();
-        doomLoaded = doomEngine.init(wadPath, DOOM_WIDTH, DOOM_HEIGHT);
+        this.doomLoaded  = false;
+        this.isLoading   = true;
+        this.loadProgress = 0;
+        this.loadStatus   = "Starting...";
+
+        doomEngine = new DoomEngine();
+        doomEngine.setProgressCallback((pct, msg) -> {
+            this.loadProgress = pct;
+            this.loadStatus   = msg;
+            if (pct == 100) {
+                this.doomLoaded = true;
+                this.isLoading  = false;
+                markDirty();
+            } else if (pct < 0) {
+                // Error
+                this.doomLoaded = false;
+                this.isLoading  = false;
+                doomEngine.destroy();
+                doomEngine = null;
+            }
+        });
+
+        System.out.println("[DoomMod] loadDoom() starting async init: " + wadPath);
+        doomEngine.initAsync(wadPath, DOOM_WIDTH, DOOM_HEIGHT);
         markDirty();
     }
 
@@ -190,7 +235,10 @@ public class MonitorTileEntity extends TileEntity implements ITickable {
             doomEngine.destroy();
             doomEngine = null;
         }
-        doomLoaded = false;
+        doomLoaded    = false;
+        isLoading     = false;
+        loadProgress  = 0;
+        loadStatus    = "";
     }
 
     public void sendKeyEvent(int keyCode, boolean pressed) {
@@ -208,13 +256,14 @@ public class MonitorTileEntity extends TileEntity implements ITickable {
         if (!powered || !isMaster) return;
 
         // If doomLoaded was restored from NBT but engine never started (e.g. world reload),
-        // kick off initialisation now.
-        if (doomLoaded && doomEngine == null && !doomWadPath.isEmpty()) {
+        // kick off async initialisation now — but only once.
+        if (doomLoaded && doomEngine == null && !doomWadPath.isEmpty() && !isLoading) {
             loadDoom(doomWadPath);
             return;
         }
 
-        if (!doomLoaded || doomEngine == null) return;
+        // Still initialising or not ready — skip tick
+        if (!doomLoaded || doomEngine == null || !doomEngine.isReady()) return;
 
         doomEngine.tick(pixelBuffer);
         world.markBlockRangeForRenderUpdate(pos, pos);
@@ -273,13 +322,13 @@ public class MonitorTileEntity extends TileEntity implements ITickable {
         boolean prevLoaded = this.doomLoaded;
         readFromNBT(pkt.getNbtCompound());
 
-        // Client-side: if server synced a wadPath and we haven't started DoomEngine yet,
-        // start it now. This is the ONLY place DoomEngine is initialised — never on the server.
-        if (world != null && world.isRemote && isMaster) {
+        // Client-side: if server synced a wadPath and engine isn't already running/loading,
+        // start async init. Guard with isLoading to prevent duplicate spawns.
+        if (world != null && world.isRemote && isMaster && !isLoading) {
             boolean pathChanged = !doomWadPath.isEmpty() && !doomWadPath.equals(prevWadPath);
-            boolean notRunning  = doomEngine == null || !prevLoaded;
+            boolean notRunning  = doomEngine == null || !doomEngine.isReady();
             if (doomLoaded && (pathChanged || notRunning)) {
-                loadDoom(doomWadPath); // real init on client
+                loadDoom(doomWadPath);
             }
         }
     }
