@@ -9,7 +9,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -30,24 +30,19 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-gradle-
 
-    - name: Setup Gradle wrapper
+    - name: Setup Gradle wrapper (4.9)
       run: |
-        gradle wrapper --gradle-version 4.9 --distribution-type bin || true
         if [ ! -f gradlew ]; then
-          curl -L https://services.gradle.org/distributions/gradle-4.9-bin.zip -o gradle.zip
-          unzip -q gradle.zip
-          gradle-4.9/bin/gradle wrapper
+          curl -fL https://services.gradle.org/distributions/gradle-4.9-bin.zip -o /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d /tmp/
+          /tmp/gradle-4.9/bin/gradle wrapper --gradle-version 4.9
         fi
-
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
-
-    - name: Setup ForgeGradle (deobfuscation)
-      run: |
-        ./gradlew setupDecompWorkspace --no-daemon --stacktrace 2>&1 | tail -50 || true
+        chmod +x gradlew
 
     - name: Build mod
       run: ./gradlew build --no-daemon --stacktrace
+      env:
+        GRADLE_OPTS: "-Xmx3G"
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4

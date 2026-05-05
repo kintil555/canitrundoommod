@@ -1,10 +1,13 @@
 buildscript {
     repositories {
-        jcenter()
-        maven { url = "https://files.minecraftforge.net/maven" }
+        mavenCentral()
+        maven { url = "https://maven.minecraftforge.net" }
+        maven { url = "https://maven.anatawa12.com/releases" }
     }
     dependencies {
-        classpath 'net.minecraftforge.gradle:ForgeGradle:2.3-SNAPSHOT'
+        classpath("com.anatawa12.forge:ForgeGradle:2.3-1.0.+") {
+            changing = true
+        }
     }
 }
 
@@ -23,6 +26,11 @@ minecraft {
     version = "1.12.2-14.23.5.2860"
     runDir = "run"
     mappings = "stable_39"
+}
+
+repositories {
+    mavenCentral()
+    maven { url = "https://maven.minecraftforge.net" }
 }
 
 dependencies {
