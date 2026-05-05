@@ -110,7 +110,7 @@ public class GuiMonitor extends GuiScreen {
             if (!path.isEmpty()) {
                 master.loadDoom(path);
                 // Also send to server so state is saved
-                PacketHandler.CHANNEL.sendToServer(new PacketLoadWad(masterPos, path));
+                PacketHandler.INSTANCE.sendToServer(new PacketLoadWad(masterPos, path));
             }
         } else if (button.id == 2) { // Browse
             openFileBrowser();
@@ -162,7 +162,7 @@ public class GuiMonitor extends GuiScreen {
             String path = wadPathField.getText().trim();
             if (!path.isEmpty()) {
                 master.loadDoom(path);
-                PacketHandler.CHANNEL.sendToServer(new PacketLoadWad(masterPos, path));
+                PacketHandler.INSTANCE.sendToServer(new PacketLoadWad(masterPos, path));
             }
         }
     }
