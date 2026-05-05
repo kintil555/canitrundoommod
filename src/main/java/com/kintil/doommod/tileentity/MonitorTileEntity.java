@@ -61,72 +61,77 @@ public class MonitorTileEntity extends TileEntity implements ITickable {
     public int     getGridY()          { return gridY; }
 
     /**
-     * Called when the player right-clicks this block.
-     * Scans the neighbourhood for a 4×5 (or smaller) cluster of monitor blocks,
-     * marks this block as master, marks every neighbour as slave, and powers on.
+     * Called server-side when player right-clicks.
+     * Requires EXACTLY GRID_W x GRID_H solid rectangle of monitor blocks.
+     * Clicked block can be any block in the cluster — we auto-find the origin.
      */
     public void activate(EnumFacing face) {
         if (world == null) return;
 
-        // Build cluster starting from THIS block as the origin.
-        // We scan along the two axes perpendicular to `face`.
-        // right-axis = face.rotateY()  (horizontal)
-        // up-axis    = UP              (always vertical)
         EnumFacing right = face.rotateY();
         EnumFacing up    = EnumFacing.UP;
 
-        // Find the bottom-left corner of the cluster (max extend left & down)
-        // We try to place this block so the cluster is centred on it, then clamp.
-        // Simpler: scan up to GRID_W right and GRID_H up from current pos.
+        // Try every possible offset: assume clicked block is at grid position (ox, oy)
+        BlockPos[][] winningPositions = null;
+        BlockPos     winningOrigin    = null;
 
-        // First collect all monitor blocks in a bounding box
-        // around this block that share the same facing axis.
-        boolean[][] found = new boolean[GRID_W][GRID_H];
-        BlockPos[][] positions = new BlockPos[GRID_W][GRID_H];
-
-        // Anchor: this block = (0,0). Find how far left/down we can go.
-        // For simplicity we place origin at this block and build rightward/upward.
-        // Players are expected to click the bottom-left block of a pre-placed array.
-        // Actually: scan a GRID_W × GRID_H window with this block at bottom-left corner.
-
-        BlockPos origin = pos;
-
-        int clusterW = 0, clusterH = 0;
-        for (int gx = 0; gx < GRID_W; gx++) {
-            for (int gy = 0; gy < GRID_H; gy++) {
-                BlockPos candidate = origin
-                    .offset(right, gx)
-                    .offset(up,    gy);
-                if (isMonitorAt(candidate)) {
-                    found[gx][gy] = true;
-                    positions[gx][gy] = candidate;
-                    if (gx + 1 > clusterW) clusterW = gx + 1;
-                    if (gy + 1 > clusterH) clusterH = gy + 1;
+        outer:
+        for (int ox = 0; ox < GRID_W; ox++) {
+            for (int oy = 0; oy < GRID_H; oy++) {
+                BlockPos origin = pos
+                        .offset(right.getOpposite(), ox)
+                        .offset(up.getOpposite(),    oy);
+                BlockPos[][] positions = new BlockPos[GRID_W][GRID_H];
+                boolean valid = true;
+                for (int gx = 0; gx < GRID_W && valid; gx++) {
+                    for (int gy = 0; gy < GRID_H && valid; gy++) {
+                        BlockPos candidate = origin.offset(right, gx).offset(up, gy);
+                        if (isMonitorAt(candidate)) {
+                            positions[gx][gy] = candidate;
+                        } else {
+                            valid = false;
+                        }
+                    }
+                }
+                if (valid) {
+                    winningPositions = positions;
+                    winningOrigin    = origin;
+                    break outer;
                 }
             }
         }
 
-        if (clusterW == 0 || clusterH == 0) return;
+        if (winningPositions == null) {
+            // Cluster incomplete — tell nearby players
+            String msg = "\u00a7cNeed a solid " + GRID_W + "\u00d7" + GRID_H
+                    + " rectangle of Monitor blocks (" + (GRID_W * GRID_H) + " total)!";
+            net.minecraft.util.text.TextComponentString txt =
+                    new net.minecraft.util.text.TextComponentString(msg);
+            for (net.minecraft.entity.player.EntityPlayer p : world.playerEntities) {
+                if (p.getDistanceSq(pos) < 64) p.sendMessage(txt);
+            }
+            return;
+        }
 
-        // Mark this block as master
-        powered     = true;
-        isMaster    = true;
-        masterPos   = null;
-        activeFace  = face;
-        gridX = 0;
-        gridY = 0;
-        syncToClients();
+        // Setup master (origin block)
+        TileEntity originTE = world.getTileEntity(winningOrigin);
+        if (!(originTE instanceof MonitorTileEntity)) return;
+        MonitorTileEntity masterTE = (MonitorTileEntity) originTE;
+        masterTE.powered    = true;
+        masterTE.isMaster   = true;
+        masterTE.masterPos  = null;
+        masterTE.activeFace = face;
+        masterTE.gridX      = 0;
+        masterTE.gridY      = 0;
+        masterTE.syncToClients();
 
-        // Mark each other block as slave
-        for (int gx = 0; gx < clusterW; gx++) {
-            for (int gy = 0; gy < clusterH; gy++) {
-                if (gx == 0 && gy == 0) continue; // that's us
-                if (!found[gx][gy]) continue;
-                TileEntity te = world.getTileEntity(positions[gx][gy]);
-                if (te instanceof MonitorTileEntity) {
-                    MonitorTileEntity slave = (MonitorTileEntity) te;
-                    slave.setupAsSlave(pos, face, gx, gy);
-                }
+        // Setup all other blocks as slaves
+        for (int gx = 0; gx < GRID_W; gx++) {
+            for (int gy = 0; gy < GRID_H; gy++) {
+                if (winningPositions[gx][gy].equals(winningOrigin)) continue;
+                TileEntity te = world.getTileEntity(winningPositions[gx][gy]);
+                if (te instanceof MonitorTileEntity)
+                    ((MonitorTileEntity) te).setupAsSlave(winningOrigin, face, gx, gy);
             }
         }
     }

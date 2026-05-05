@@ -25,64 +25,75 @@ public class MonitorBlock extends Block implements ITileEntityProvider {
         setCreativeTab(DoomMod.creativeTab);
     }
 
-    @Override
-    public TileEntity createNewTileEntity(World worldIn, int meta) {
-        return new MonitorTileEntity();
-    }
+    @Override public TileEntity createNewTileEntity(World w, int meta) { return new MonitorTileEntity(); }
+    @Override public boolean hasTileEntity(IBlockState s) { return true; }
+    @Override public boolean isOpaqueCube(IBlockState s)  { return false; }
+
+    // ── Right-click ───────────────────────────────────────────────────────────
 
     @Override
-    public boolean hasTileEntity(IBlockState state) {
-        return true;
-    }
+    public boolean onBlockActivated(World world, BlockPos pos, IBlockState state,
+                                    EntityPlayer player, EnumHand hand,
+                                    EnumFacing facing, float hx, float hy, float hz) {
 
-    @Override
-    public boolean onBlockActivated(World worldIn, BlockPos pos, IBlockState state,
-                                    EntityPlayer playerIn, EnumHand hand,
-                                    EnumFacing facing, float hitX, float hitY, float hitZ) {
-
-        TileEntity te = worldIn.getTileEntity(pos);
+        TileEntity te = world.getTileEntity(pos);
         if (!(te instanceof MonitorTileEntity)) return true;
         MonitorTileEntity monitor = (MonitorTileEntity) te;
 
-        if (playerIn.isSneaking()) {
-            // Shift+click: toggle power off for whole cluster
-            if (!worldIn.isRemote) {
-                turnOffCluster(worldIn, monitor);
-            }
+        if (player.isSneaking()) {
+            // Shift+click → power off entire cluster
+            if (!world.isRemote) turnOffCluster(world, monitor);
             return true;
         }
 
-        // Normal click: power on cluster (server side sets state, client opens GUI)
-        if (!worldIn.isRemote) {
+        if (!world.isRemote) {
+            // Server: try to activate — will validate cluster size internally
             monitor.activate(facing);
         } else {
-            // Client side: open GUI immediately.
-            // Don't check isPowered() here — server just called activate() but the
-            // TileEntity sync packet hasn't arrived yet (race condition).
-            // GUI itself checks isDoomLoaded() to show the WAD prompt or Doom input.
-            MonitorTileEntity master = getMaster(worldIn, monitor);
-            if (master == null) master = monitor; // fallback: treat clicked block as master
-            com.kintil.doommod.client.gui.GuiMonitor.open(master, master.getPos());
+            // Client: open GUI only if cluster is already powered
+            MonitorTileEntity master = getMaster(world, monitor);
+            if (master == null) master = monitor;
+            if (master.isPowered()) {
+                com.kintil.doommod.client.gui.GuiMonitor.open(master, master.getPos());
+            } else {
+                // Not yet powered — server will validate; give feedback if cluster is wrong size
+                // (message handled server-side via chat)
+            }
         }
         return true;
     }
 
-    /** Walk the cluster (by master reference) and deactivate all blocks. */
+    // ── Block broken → shut down cluster ─────────────────────────────────────
+
+    @Override
+    public void breakBlock(World world, BlockPos pos, IBlockState state) {
+        if (!world.isRemote) {
+            TileEntity te = world.getTileEntity(pos);
+            if (te instanceof MonitorTileEntity) {
+                turnOffCluster(world, (MonitorTileEntity) te);
+            }
+        }
+        super.breakBlock(world, pos, state);
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
     private void turnOffCluster(World world, MonitorTileEntity clicked) {
         MonitorTileEntity master = getMaster(world, clicked);
-        if (master == null) return;
-        // Deactivate master (stops doom engine)
-        master.deactivate();
-        // Scan nearby for slaves that point to this master
-        BlockPos mp = master.getPos();
+        // If clicked block IS master or we found master, shut it and all slaves down
+        MonitorTileEntity m = (master != null) ? master : clicked;
+        BlockPos mp = m.getPos();
+
+        m.deactivate();
+
         for (int dx = -MonitorTileEntity.GRID_W; dx <= MonitorTileEntity.GRID_W; dx++) {
             for (int dy = -MonitorTileEntity.GRID_H; dy <= MonitorTileEntity.GRID_H; dy++) {
                 for (int dz = -MonitorTileEntity.GRID_W; dz <= MonitorTileEntity.GRID_W; dz++) {
-                    TileEntity te = world.getTileEntity(mp.add(dx, dy, dz));
-                    if (te instanceof MonitorTileEntity) {
-                        MonitorTileEntity m = (MonitorTileEntity) te;
-                        if (!m.isMaster() && mp.equals(m.getMasterPos())) {
-                            m.deactivate();
+                    TileEntity neighbor = world.getTileEntity(mp.add(dx, dy, dz));
+                    if (neighbor instanceof MonitorTileEntity) {
+                        MonitorTileEntity mn = (MonitorTileEntity) neighbor;
+                        if (!mn.isMaster() && mp.equals(mn.getMasterPos())) {
+                            mn.deactivate();
                         }
                     }
                 }
@@ -96,7 +107,4 @@ public class MonitorBlock extends Block implements ITileEntityProvider {
         TileEntity masterTe = world.getTileEntity(te.getMasterPos());
         return masterTe instanceof MonitorTileEntity ? (MonitorTileEntity) masterTe : null;
     }
-
-    @Override
-    public boolean isOpaqueCube(IBlockState state) { return false; }
 }
