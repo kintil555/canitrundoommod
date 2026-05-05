@@ -84,6 +84,10 @@ public class GuiMonitor extends GuiScreen {
 
         String path = chosen.getAbsolutePath();
 
+        // Tell DoomEngine where .minecraft is so it can extract the binary there
+        // (avoids Windows Defender blocking execution from %TEMP%)
+        DoomEngine.gameDir = Minecraft.getMinecraft().gameDir;
+
         // Load on client (DoomEngine); persist path on server via packet
         master.loadDoom(path);
         PacketHandler.INSTANCE.sendToServer(new PacketLoadWad(masterPos, path));

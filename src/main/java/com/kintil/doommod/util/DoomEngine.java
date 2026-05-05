@@ -264,6 +264,9 @@ public class DoomEngine {
         dir.delete();
     }
 
+    // Game directory set from outside (ClientProxy/GuiMonitor) before calling initAsync
+    public static File gameDir = null; // set to Minecraft.getMinecraft().gameDir
+
     private File extractDoomExecutable(File targetDir) {
         String os = System.getProperty("os.name").toLowerCase();
         String resourceName, outName;
@@ -279,17 +282,39 @@ public class DoomEngine {
             outName = "doom";
         }
 
+        // ── Prefer .minecraft/doom/ as extraction target (more trusted by AV) ──
+        // Fall back to tempDir if gameDir is not set.
+        File binDir = (gameDir != null)
+                ? new File(gameDir, "doom")
+                : targetDir;
+        if (!binDir.exists()) binDir.mkdirs();
+
+        File out = new File(binDir, outName);
+
+        // If already extracted and same size, reuse it (skip re-extract on every load)
         InputStream in = DoomEngine.class.getResourceAsStream(resourceName);
         if (in == null) {
             System.err.println("[DoomMod] Binary not in jar: " + resourceName);
             return null;
         }
 
-        File out = new File(targetDir, outName);
-        try (FileOutputStream fos = new FileOutputStream(out)) {
+        try {
+            // Check size: read full jar resource length
             byte[] buf = new byte[8192];
+            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
             int n;
-            while ((n = in.read(buf)) != -1) fos.write(buf, 0, n);
+            while ((n = in.read(buf)) != -1) baos.write(buf, 0, n);
+            byte[] jarBytes = baos.toByteArray();
+
+            // Only (re)write if missing or different size
+            if (!out.exists() || out.length() != jarBytes.length) {
+                System.out.println("[DoomMod] Extracting binary to: " + out.getAbsolutePath());
+                try (FileOutputStream fos = new FileOutputStream(out)) {
+                    fos.write(jarBytes);
+                }
+            } else {
+                System.out.println("[DoomMod] Reusing cached binary: " + out.getAbsolutePath());
+            }
         } catch (IOException e) {
             System.err.println("[DoomMod] Failed to extract binary: " + e.getMessage());
             return null;
@@ -298,6 +323,26 @@ public class DoomEngine {
         }
 
         if (!os.contains("win")) out.setExecutable(true);
+
+        // Also copy to tempDir so it runs from its own working directory
+        // (some doom ports look for config relative to exe)
+        if (!out.getParentFile().equals(targetDir)) {
+            File tempExe = new File(targetDir, outName);
+            try (FileOutputStream fos = new FileOutputStream(tempExe);
+                 java.io.FileInputStream fis = new java.io.FileInputStream(out)) {
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = fis.read(buf)) != -1) fos.write(buf, 0, n);
+                if (!os.contains("win")) tempExe.setExecutable(true);
+                System.out.println("[DoomMod] Copied to tempDir: " + tempExe.getAbsolutePath());
+                return tempExe;
+            } catch (IOException e) {
+                // If copy fails, use the .minecraft/doom/ one directly
+                System.out.println("[DoomMod] Copy failed, using original: " + out.getAbsolutePath());
+                return out;
+            }
+        }
+
         return out;
     }
 }
