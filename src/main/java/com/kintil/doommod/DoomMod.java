@@ -5,7 +5,6 @@ import com.kintil.doommod.item.MonitorItem;
 import com.kintil.doommod.network.PacketHandler;
 import com.kintil.doommod.proxy.CommonProxy;
 import net.minecraft.creativetab.CreativeTabs;
-import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.common.SidedProxy;
@@ -31,11 +30,6 @@ public class DoomMod {
         @Override
         public ItemStack getTabIconItem() {
             return new ItemStack(ModBlocks.MONITOR_BLOCK);
-        }
-
-        @Override
-        public net.minecraft.item.Item createIcon() {
-            return Item.getItemFromBlock(ModBlocks.MONITOR_BLOCK);
         }
     };
 

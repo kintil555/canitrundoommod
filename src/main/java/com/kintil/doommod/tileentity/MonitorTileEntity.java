@@ -111,7 +111,7 @@ public class MonitorTileEntity extends TileEntity implements ITickable {
         playerLocked = compound.getBoolean("playerLocked");
         lockedPlayerName = compound.getString("lockedPlayerName");
         int faceIdx = compound.getInteger("activeFace");
-        activeFace = EnumFacing.getFacingFromIndex(faceIdx);
+        activeFace = EnumFacing.getFront(faceIdx);
     }
 
     @Override
