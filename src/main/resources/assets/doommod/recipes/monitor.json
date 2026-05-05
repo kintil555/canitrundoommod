@@ -1,0 +1,16 @@
+{
+  "type": "forge:ore_shaped",
+  "pattern": [
+    "GGG",
+    "GRG",
+    "GGG"
+  ],
+  "key": {
+    "G": { "item": "minecraft:glowstone" },
+    "R": { "item": "minecraft:redstone" }
+  },
+  "result": {
+    "item": "doommod:monitor",
+    "count": 1
+  }
+}
