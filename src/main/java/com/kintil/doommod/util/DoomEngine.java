@@ -120,7 +120,7 @@ public class DoomEngine {
                         System.out.println("[Doom] " + line);
                         // Forward interesting Doom boot lines to the progress UI
                         BiConsumer<Integer, String> cb = progressCallback;
-                        if (cb != null && !line.isBlank()) {
+                        if (cb != null && !line.trim().isEmpty()) {
                             cb.accept(75, "\u00a77" + line.trim());
                         }
                     }

@@ -180,7 +180,9 @@ public class GuiMonitor extends GuiScreen {
         String dots = "";
         if (pct > 0 && pct < 100) {
             int d = (animTick / 8) % 4;
-            dots = ".".repeat(d);
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < d; i++) sb.append('.');
+            dots = sb.toString();
         }
         drawCenteredString(fontRenderer, "\u00a77" + status + dots, cx, py + panelH - 12, 0xFFFFFF);
     }
