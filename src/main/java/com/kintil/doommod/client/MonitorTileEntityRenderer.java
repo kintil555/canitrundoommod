@@ -103,16 +103,41 @@ public class MonitorTileEntityRenderer extends TileEntitySpecialRenderer<Monitor
             GL11.glTexCoord2f(uMin, vMax); GL11.glVertex3f(-0.5f, -0.5f, h);
             GL11.glEnd();
         } else {
-            // No game loaded: draw a black/dark-green standby screen
+            // No game loaded: bright white standby screen (like a CRT powering on)
             GlStateManager.disableTexture2D();
-            // Dark screen
+            GlStateManager.disableLighting();
+
+            // Bright white background
             GL11.glBegin(GL11.GL_QUADS);
-            GL11.glColor3f(0.02f, 0.04f, 0.02f);
+            GL11.glColor3f(0.95f, 0.95f, 0.95f);
             GL11.glVertex3f(-0.5f,  0.5f, h);
             GL11.glVertex3f( 0.5f,  0.5f, h);
             GL11.glVertex3f( 0.5f, -0.5f, h);
             GL11.glVertex3f(-0.5f, -0.5f, h);
             GL11.glEnd();
+
+            // Scanline overlay — thin dark horizontal stripes like a real CRT
+            GL11.glEnable(GL11.GL_BLEND);
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+            GL11.glBegin(GL11.GL_LINES);
+            for (int i = 0; i <= 20; i++) {
+                float yPos = -0.5f + (float) i / 20;
+                GL11.glColor4f(0f, 0f, 0f, 0.10f);
+                GL11.glVertex3f(-0.5f, yPos, h + 0.0001f);
+                GL11.glVertex3f( 0.5f, yPos, h + 0.0001f);
+            }
+            GL11.glEnd();
+
+            // Blue tint center strip — "no signal" look
+            GL11.glBegin(GL11.GL_QUADS);
+            GL11.glColor4f(0.4f, 0.6f, 1.0f, 0.18f);
+            GL11.glVertex3f(-0.5f,  0.08f, h + 0.0002f);
+            GL11.glVertex3f( 0.5f,  0.08f, h + 0.0002f);
+            GL11.glVertex3f( 0.5f, -0.08f, h + 0.0002f);
+            GL11.glVertex3f(-0.5f, -0.08f, h + 0.0002f);
+            GL11.glEnd();
+            GL11.glDisable(GL11.GL_BLEND);
+
             GL11.glColor3f(1f, 1f, 1f);
             GlStateManager.enableTexture2D();
         }
