@@ -6,6 +6,8 @@ import com.kintil.doommod.network.PacketHandler;
 import com.kintil.doommod.proxy.CommonProxy;
 import net.minecraft.creativetab.CreativeTabs;
 import net.minecraft.item.ItemStack;
+import net.minecraftforge.fml.relauncher.Side;
+import net.minecraftforge.fml.relauncher.SideOnly;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.common.SidedProxy;
 import net.minecraftforge.fml.common.event.FMLInitializationEvent;
@@ -27,8 +29,9 @@ public class DoomMod {
     public static CommonProxy proxy;
 
     public static CreativeTabs creativeTab = new CreativeTabs("doommod") {
+        @SideOnly(Side.CLIENT)
         @Override
-        public ItemStack getTabIconItem() {
+        public ItemStack createIcon() {
             return new ItemStack(ModBlocks.MONITOR_BLOCK);
         }
     };
